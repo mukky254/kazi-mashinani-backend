@@ -10,8 +10,6 @@
     "mongoose": "^7.5.0",
     "cors": "^2.8.5",
     "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2",
-    "helmet": "^7.0.0",
-    "express-rate-limit": "^6.10.0"
+    "jsonwebtoken": "^9.0.2"
   }
 }

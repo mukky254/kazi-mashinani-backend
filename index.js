@@ -8,12 +8,16 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 
-// Environment variables
-const MONGODB_URI = process.env.MONGODB_URI;
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
+// Environment variables - ADD THESE TO VERCEL ENV VARIABLES
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://kaziuser:securepassword123@cluster0.bneqb6q.mongodb.net/kaziDB?retryWrites=true&w=majority';
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key-for-development';
 const PORT = process.env.PORT || 3000;
 
-console.log('🔧 Starting Kazi Mashinani Backend...');
+console.log('🔧 Environment Check:', {
+  hasMongoURI: !!MONGODB_URI,
+  mongoURILength: MONGODB_URI?.length,
+  hasJWTSecret: !!JWT_SECRET
+});
 
 // Middleware
 app.use(helmet());
@@ -63,8 +67,12 @@ const Job = mongoose.model('Job', jobSchema);
 // Hash password before saving
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
-  this.password = await bcrypt.hash(this.password, 12);
-  next();
+  try {
+    this.password = await bcrypt.hash(this.password, 12);
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Compare password method
@@ -72,20 +80,56 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Connect to MongoDB
+// Connect to MongoDB with better error handling
 const connectDB = async () => {
   try {
-    console.log('🔗 Connecting to MongoDB...');
+    console.log('🔗 Attempting MongoDB connection...');
+    console.log('📝 Connection URI:', MONGODB_URI ? 'Present' : 'Missing');
+    
+    if (!MONGODB_URI) {
+      console.error('❌ MONGODB_URI is missing from environment variables');
+      return;
+    }
+
     await mongoose.connect(MONGODB_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
     });
-    console.log('✅ MongoDB connected successfully');
+    
+    console.log('✅ MongoDB connected successfully!');
+    console.log('📊 Database name:', mongoose.connection.db?.databaseName);
+    
   } catch (error) {
-    console.error('❌ MongoDB connection failed:', error.message);
+    console.error('❌ MongoDB connection failed:');
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    console.error('Error code:', error.code);
+    
+    // Check if it's an authentication error
+    if (error.message.includes('authentication failed')) {
+      console.error('🔐 Authentication failed - check username/password');
+    } else if (error.message.includes('getaddrinfo')) {
+      console.error('🌐 Network error - check cluster URL');
+    }
   }
 };
 
+// Database connection events
+mongoose.connection.on('connected', () => {
+  console.log('🎉 MongoDB connected - ready for requests');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('❌ MongoDB connection error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('⚠️ MongoDB disconnected');
+});
+
+// Connect to database
 connectDB();
 
 // Auth middleware
@@ -113,24 +157,64 @@ const auth = async (req, res, next) => {
 
 // Root endpoint
 app.get('/', (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
   res.json({
     message: 'Kazi Mashinani Backend API is running! 🚀',
-    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+    database: dbStatus,
     endpoints: {
       auth: ['POST /api/signup', 'POST /api/signin'],
       jobs: ['GET /api/jobs', 'POST /api/jobs', 'GET /api/jobs/:id'],
       health: 'GET /api/health'
-    }
+    },
+    timestamp: new Date().toISOString()
   });
 });
 
-// Health check
+// Health check with detailed DB info
 app.get('/api/health', (req, res) => {
+  const dbStates = {
+    0: 'Disconnected',
+    1: 'Connected', 
+    2: 'Connecting',
+    3: 'Disconnecting'
+  };
+  
   res.json({
     status: 'OK',
-    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
-    timestamp: new Date().toISOString()
+    database: dbStates[mongoose.connection.readyState],
+    readyState: mongoose.connection.readyState,
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
   });
+});
+
+// Test database connection endpoint
+app.get('/api/debug-db', async (req, res) => {
+  try {
+    const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+    
+    // Try to list collections if connected
+    let collections = [];
+    if (dbStatus === 'Connected') {
+      collections = await mongoose.connection.db.listCollections().toArray();
+    }
+    
+    res.json({
+      database: dbStatus,
+      readyState: mongoose.connection.readyState,
+      collections: collections.map(c => c.name),
+      hasModels: {
+        User: !!User,
+        Job: !!Job
+      }
+    });
+  } catch (error) {
+    res.json({
+      database: 'Error',
+      error: error.message,
+      readyState: mongoose.connection.readyState
+    });
+  }
 });
 
 // ==================== AUTH ROUTES ====================
@@ -138,6 +222,14 @@ app.get('/api/health', (req, res) => {
 // Sign up
 app.post('/api/signup', async (req, res) => {
   try {
+    // Check database connection first
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not available. Please try again later.'
+      });
+    }
+
     const { name, email, password, userType, phone, location, skills } = req.body;
 
     // Validation
@@ -216,6 +308,14 @@ app.post('/api/signup', async (req, res) => {
 // Sign in
 app.post('/api/signin', async (req, res) => {
   try {
+    // Check database connection first
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not available. Please try again later.'
+      });
+    }
+
     const { email, password } = req.body;
 
     // Validation
@@ -299,9 +399,60 @@ app.get('/api/me', auth, async (req, res) => {
 
 // ==================== JOBS ROUTES ====================
 
-// Get all jobs
+// Get all jobs (with fallback to mock data if DB not connected)
 app.get('/api/jobs', async (req, res) => {
   try {
+    // Check if database is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.log('📦 Using mock jobs data (DB not connected)');
+      
+      // Return mock data as fallback
+      const mockJobs = [
+        {
+          _id: '1',
+          title: 'Plumber Needed - Urgent',
+          description: 'Need a qualified plumber to fix kitchen sink and drainage issues',
+          category: 'Plumbing',
+          location: 'Nairobi West',
+          salary: 3500,
+          duration: '1 day',
+          status: 'open',
+          employer: { 
+            name: 'John Kamau', 
+            email: 'john@example.com',
+            phone: '+254712345678',
+            rating: 4.5 
+          },
+          createdAt: new Date().toISOString()
+        },
+        {
+          _id: '2', 
+          title: 'Web Developer for E-commerce Site',
+          description: 'Looking for experienced web developer to build company e-commerce website',
+          category: 'Technology',
+          location: 'Remote',
+          salary: 25000,
+          duration: '3 weeks',
+          status: 'open',
+          employer: { 
+            name: 'Tech Solutions Ltd',
+            email: 'info@techsolutions.com',
+            phone: '+254711223344',
+            rating: 4.8
+          },
+          createdAt: new Date().toISOString()
+        }
+      ];
+
+      return res.json({
+        success: true,
+        jobs: mockJobs,
+        total: mockJobs.length,
+        message: 'Mock data - Database not connected'
+      });
+    }
+
+    // Database is connected - get real data
     const { category, location, search, page = 1, limit = 10 } = req.query;
 
     const filter = { status: 'open' };
@@ -328,7 +479,8 @@ app.get('/api/jobs', async (req, res) => {
       jobs,
       total,
       page: parseInt(page),
-      pages: Math.ceil(total / limit)
+      pages: Math.ceil(total / limit),
+      message: 'Real data from database'
     });
 
   } catch (error) {
@@ -344,6 +496,13 @@ app.get('/api/jobs', async (req, res) => {
 // Get single job
 app.get('/api/jobs/:id', async (req, res) => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not available'
+      });
+    }
+
     const job = await Job.findById(req.params.id)
       .populate('employer', 'name email phone rating profilePicture location');
 
@@ -371,6 +530,13 @@ app.get('/api/jobs/:id', async (req, res) => {
 // Create job (employer only)
 app.post('/api/jobs', auth, async (req, res) => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not available'
+      });
+    }
+
     if (req.user.userType !== 'employer') {
       return res.status(403).json({
         success: false,
@@ -422,6 +588,13 @@ app.post('/api/jobs', auth, async (req, res) => {
 // Get employer's jobs
 app.get('/api/my-jobs', auth, async (req, res) => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not available'
+      });
+    }
+
     if (req.user.userType !== 'employer') {
       return res.status(403).json({
         success: false,
@@ -467,3 +640,5 @@ app.use((error, req, res, next) => {
 
 // Export for Vercel
 module.exports = app;
+
+

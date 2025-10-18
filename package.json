@@ -1,15 +1,12 @@
 {
   "name": "kazi-mashinani-backend",
-  "version": "1.0.0",
+  "version": "1.0.0", 
   "main": "api/index.js",
   "scripts": {
     "dev": "node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "mongoose": "^7.5.0",
-    "cors": "^2.8.5",
-    "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2"
+    "cors": "^2.8.5"
   }
 }

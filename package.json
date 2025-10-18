@@ -1,24 +1,13 @@
 {
   "name": "kazi-mashinani-backend",
   "version": "1.0.0",
-  "description": "Backend for Kazi Mashinani Kenya",
-  "main": "index.js",
+  "main": "api/index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "node api/index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
     "mongoose": "^7.5.0",
-    "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "helmet": "^7.0.0",
-    "express-rate-limit": "^6.10.0",
-    "validator": "^13.11.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "cors": "^2.8.5"
   }
 }

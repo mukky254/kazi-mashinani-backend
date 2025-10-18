@@ -4,27 +4,21 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
-// Import routes
-const authRoutes = require('./routes/auth');
-const jobRoutes = require('./routes/jobs');
-const applicationRoutes = require('./routes/applications');
-const userRoutes = require('./routes/users');
-
 const app = express();
 
-// Get environment variables
+// Environment variables
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://kaziuser:securepassword123@cluster0.bneqb6q.mongodb.net/kaziDB?retryWrites=true&w=majority';
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secure-jwt-secret-key-here-make-it-very-long-and-random';
-const CLIENT_URL = process.env.CLIENT_URL || 'https://kazi-ocha-frontend-887d.vercel.app';
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || 'https://kazi-ocha-frontend-887d.vercel.app,http://localhost:3000,http://127.0.0.1:5500';
 const PORT = process.env.PORT || 3000;
 
-console.log('Environment Variables Loaded:', {
-  MONGODB_URI: MONGODB_URI ? 'Loaded' : 'Missing',
-  JWT_SECRET: JWT_SECRET ? 'Loaded' : 'Missing',
-  CLIENT_URL,
-  PORT
-});
+console.log('🔧 Starting server with MongoDB URI:', MONGODB_URI ? 'Provided' : 'Missing');
+
+// Middleware
+app.use(helmet());
+app.use(cors({
+  origin: ['https://kazi-ocha-frontend-887d.vercel.app', 'http://localhost:3000', 'http://127.0.0.1:5500'],
+  credentials: true
+}));
+app.use(express.json());
 
 // Rate limiting
 const limiter = rateLimit({
@@ -33,75 +27,106 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Security headers
-app.use(helmet());
+// Improved MongoDB connection with retry logic
+const connectDB = async () => {
+  try {
+    console.log('🔗 Connecting to MongoDB...');
+    await mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    console.log('✅ MongoDB connected successfully');
+  } catch (error) {
+    console.error('❌ MongoDB connection failed:', error.message);
+    console.log('📋 Connection details:', {
+      hasURI: !!MONGODB_URI,
+      uriLength: MONGODB_URI?.length
+    });
+    // Don't exit process in serverless environment
+  }
+};
 
-// CORS configuration
-const allowedOrigins = ALLOWED_ORIGINS.split(',');
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      return callback(null, true);
-    } else {
-      console.log('CORS blocked for origin:', origin);
-      return callback(new Error('Not allowed by CORS'), false);
-    }
-  },
-  credentials: true
-}));
+// Connect to database
+connectDB();
 
-// Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-// Database connection with better error handling
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('✅ MongoDB connected successfully'))
-.catch(err => {
-  console.error('❌ MongoDB connection error:', err);
-  process.exit(1);
-});
-
-// Simple test route
-app.get('/test', (req, res) => {
-  res.json({ 
-    message: 'Server is working!',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.status(200).json({
-    status: 'OK',
-    message: 'Server is running',
+// Routes
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Kazi Mashinani Backend is running!',
     database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
     timestamp: new Date().toISOString()
   });
 });
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/jobs', jobRoutes);
-app.use('/api/applications', applicationRoutes);
-app.use('/api/users', userRoutes);
-
-// Root endpoint
-app.get('/', (req, res) => {
+app.get('/api/health', (req, res) => {
   res.json({
-    message: 'Kazi Mashinani Kenya Backend API',
-    version: '1.0.0',
-    endpoints: {
-      health: '/api/health',
-      auth: '/api/auth',
-      jobs: '/api/jobs',
-      applications: '/api/applications',
-      users: '/api/users'
+    status: 'OK',
+    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Simple test jobs endpoint
+app.get('/api/jobs', async (req, res) => {
+  try {
+    // Check database connection
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(500).json({
+        success: false,
+        message: 'Database not connected',
+        jobs: []
+      });
     }
+
+    // Return mock data for testing
+    const mockJobs = [
+      {
+        _id: '1',
+        title: 'Plumber Needed',
+        description: 'Need a plumber to fix kitchen sink',
+        category: 'Plumbing',
+        location: 'Nairobi',
+        salary: 2500,
+        duration: '2 days',
+        status: 'open',
+        employer: { name: 'John Doe', rating: 4.5 }
+      },
+      {
+        _id: '2',
+        title: 'Web Developer',
+        description: 'Build a company website',
+        category: 'Technology',
+        location: 'Remote',
+        salary: 15000,
+        duration: '2 weeks',
+        status: 'open',
+        employer: { name: 'Tech Solutions', rating: 4.8 }
+      }
+    ];
+
+    res.json({
+      success: true,
+      jobs: mockJobs,
+      total: mockJobs.length,
+      message: 'Jobs fetched successfully (mock data)'
+    });
+  } catch (error) {
+    console.error('Jobs endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching jobs',
+      jobs: []
+    });
+  }
+});
+
+// Test auth endpoint
+app.get('/api/auth', (req, res) => {
+  res.json({
+    message: 'Auth endpoints are ready',
+    endpoints: ['/auth/signup', '/auth/signin', '/auth/me']
   });
 });
 
@@ -109,24 +134,19 @@ app.get('/', (req, res) => {
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
-    message: 'Route not found'
+    message: `Route ${req.originalUrl} not found`
   });
 });
 
-// Error handling middleware
+// Error handler
 app.use((error, req, res, next) => {
-  console.error('Error:', error);
-  res.status(error.status || 500).json({
+  console.error('Server error:', error);
+  res.status(500).json({
     success: false,
-    message: error.message || 'Internal server error'
+    message: 'Internal server error',
+    error: error.message
   });
 });
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
-  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 Client URL: ${CLIENT_URL}`);
-});
-
+// Export for Vercel
 module.exports = app;

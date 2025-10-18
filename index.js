@@ -1,88 +1,169 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 
+// Trust proxy for Vercel
+app.set('trust proxy', 1);
+
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-// This will show us the exact MongoDB connection error
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://kaziuser:securepassword123@cluster0.bneqb6q.mongodb.net/kaziDB?retryWrites=true&w=majority';
+// Environment variables
+const MONGODB_URI = process.env.MONGODB_URI;
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret';
 
-console.log('🔧 Testing MongoDB connection...');
+console.log('🚀 Starting Kazi Mashinani Backend...');
 
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 10000,
-})
-.then(() => {
-  console.log('✅ MongoDB connected successfully!');
-})
-.catch(error => {
-  console.error('❌ MongoDB connection failed:');
-  console.error('Error name:', error.name);
-  console.error('Error message:', error.message);
-  console.error('Error code:', error.code);
-  
-  if (error.message.includes('authentication failed')) {
-    console.log('🔐 AUTHENTICATION FAILED: Password is incorrect');
-    console.log('💡 Please reset the password for user "kaziuser" in MongoDB Atlas');
+// Connect to MongoDB
+if (MONGODB_URI) {
+  console.log('🔗 Connecting to MongoDB...');
+  mongoose.connect(MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => console.log('✅ MongoDB Connected!'))
+  .catch(err => console.error('❌ MongoDB Error:', err.message));
+} else {
+  console.log('❌ MONGODB_URI not set');
+}
+
+// Simple User Schema
+const userSchema = new mongoose.Schema({
+  name: String,
+  email: String,
+  password: String,
+  userType: String,
+  phone: String,
+  location: String,
+}, { timestamps: true });
+
+const jobSchema = new mongoose.Schema({
+  title: String,
+  description: String,
+  category: String,
+  location: String,
+  salary: Number,
+  duration: String,
+  employer: String,
+  status: { type: String, default: 'open' },
+}, { timestamps: true });
+
+const User = mongoose.model('User', userSchema);
+const Job = mongoose.model('Job', jobSchema);
+
+// Routes
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Kazi Mashinani API 🚀',
+    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// SIGNUP
+app.post('/api/signup', async (req, res) => {
+  try {
+    const { name, email, password, userType, phone, location } = req.body;
+    
+    const user = new User({
+      name,
+      email,
+      password: await bcrypt.hash(password, 12),
+      userType,
+      phone,
+      location
+    });
+    
+    await user.save();
+    
+    res.json({
+      success: true,
+      message: 'User created!',
+      user: { id: user._id, name, email, userType, phone, location }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// Simple routes for testing
-app.get('/', (req, res) => {
-  res.json({
-    message: 'Kazi Mashinani Backend',
-    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
-    readyState: mongoose.connection.readyState,
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.get('/api/jobs', (req, res) => {
-  const mockJobs = [
-    {
-      _id: '1',
-      title: 'Plumber Needed - Urgent',
-      description: 'Fix kitchen sink and drainage issues',
-      category: 'Plumbing',
-      location: 'Nairobi',
-      salary: 3000,
-      duration: '1 day',
-      status: 'open'
-    },
-    {
-      _id: '2',
-      title: 'Web Developer',
-      description: 'Build company website with modern technologies',
-      category: 'Technology', 
-      location: 'Remote',
-      salary: 25000,
-      duration: '2 weeks',
-      status: 'open'
+// SIGNIN  
+app.post('/api/signin', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+    
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'User not found' });
     }
-  ];
-  
-  res.json({
-    success: true,
-    jobs: mockJobs,
-    total: mockJobs.length,
-    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'
-  });
+    
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      return res.status(400).json({ success: false, message: 'Invalid password' });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Login successful!',
+      user: { id: user._id, name: user.name, email, userType: user.userType }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
-app.get('/api/connection-status', (req, res) => {
-  res.json({
-    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
-    readyState: mongoose.connection.readyState,
-    mongooseState: mongoose.STATES[mongoose.connection.readyState],
-    timestamp: new Date().toISOString()
-  });
+// GET JOBS
+app.get('/api/jobs', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const jobs = await Job.find({ status: 'open' });
+      return res.json({ success: true, jobs, source: 'database' });
+    }
+    
+    // Mock data
+    const mockJobs = [
+      {
+        _id: '1',
+        title: 'Plumber Needed - Nairobi',
+        description: 'Fix kitchen sink and drainage',
+        category: 'Plumbing',
+        location: 'Nairobi West',
+        salary: 3500,
+        duration: '1 day',
+        status: 'open'
+      },
+      {
+        _id: '2', 
+        title: 'Web Developer - Remote',
+        description: 'Build company website',
+        category: 'Technology',
+        location: 'Remote',
+        salary: 25000,
+        duration: '2 weeks',
+        status: 'open'
+      }
+    ];
+    
+    res.json({ success: true, jobs: mockJobs, source: 'mock-data' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message, jobs: [] });
+  }
+});
+
+// CREATE JOB
+app.post('/api/jobs', async (req, res) => {
+  try {
+    const job = new Job(req.body);
+    await job.save();
+    res.json({ success: true, message: 'Job created!', job });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
 module.exports = app;
-
 
